@@ -1,5 +1,6 @@
 /* eslint-disable no-underscore-dangle */
 import prettier from 'prettier';
+import invarient from 'tiny-invariant';
 import * as t from '@babel/types';
 import { isIdentifier, isTSTypeAnnotation, isTSTypeReference } from '@babel/types';
 import type { CsfFile } from '@storybook/csf-tools';
@@ -38,7 +39,10 @@ const isStoryAnnotation = (stmt: t.Statement, objectExports: Record<string, any>
   t.isIdentifier(stmt.expression.left.object) &&
   objectExports[stmt.expression.left.object.name];
 
-const getNewExport = (stmt: t.Statement, objectExports: Record<string, any>) => {
+const getNewExport = (
+  stmt: t.Statement,
+  objectExports: Record<string, t.Statement>
+): t.Statement | null => {
   if (
     t.isExportNamedDeclaration(stmt) &&
     t.isVariableDeclaration(stmt.declaration) &&
@@ -101,6 +105,7 @@ function removeUnusedTemplates(csf: CsfFile) {
     if (references.length === 1) {
       const reference = references[0];
       if (
+        reference.parentPath &&
         reference.parentPath.isVariableDeclarator() &&
         reference.parentPath.node.init === templateExpression
       ) {
@@ -140,6 +145,7 @@ export default function transform(info: FileInfo, api: API, options: { parser?: 
 
     if (t.isVariableDeclarator(decl)) {
       const { init, id } = decl;
+      invarient(init, 'Expected init to be an Expression');
       // only replace arrow function expressions && template
       const template = getTemplateBindVariable(init);
       if (!t.isArrowFunctionExpression(init) && !template) return;
@@ -153,8 +159,8 @@ export default function transform(info: FileInfo, api: API, options: { parser?: 
         return;
       }
 
-      let storyFn: t.Expression = template && t.identifier(template);
-      if (!storyFn) {
+      let storyFn: string | t.Expression | null = template && t.identifier(template);
+      if (!storyFn || typeof storyFn === 'string') {
         storyFn = init;
       }
 
@@ -179,7 +185,7 @@ export default function transform(info: FileInfo, api: API, options: { parser?: 
     }
   });
 
-  csf._ast.program.body = csf._ast.program.body.reduce((acc, stmt) => {
+  csf._ast.program.body = csf._ast.program.body.reduce<t.Statement[]>((acc, stmt) => {
     const statement = stmt as t.Statement;
     // remove story annotations & template declarations
     if (isStoryAnnotation(statement, objectExports)) {
@@ -318,6 +324,7 @@ class StorybookImportHelper {
       const { name } = id.typeAnnotation.typeAnnotation.typeName;
       if (this.getAllLocalImports().includes(name)) {
         const localTypeImport = this.getOrAddImport(type);
+        invarient(localTypeImport, 'Expected localTypeImport to be a string');
         return {
           ...id,
           typeAnnotation: t.tsTypeAnnotation(
